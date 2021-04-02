@@ -1,6 +1,6 @@
 # Stopgap System
 
-Overall design of the stopgap system
+Database replication system on AWS using a simple python script executed every day in a "serverless" way.
 
 ![Overall_infra.png](diagrams/infra.png)
 
