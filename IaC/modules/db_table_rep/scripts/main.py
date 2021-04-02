@@ -237,9 +237,73 @@ def notify_devs(message):
         TopicArn=sns_toplic_arn,
         Message=message,
     )
+
+
+def main():
+
+    # start inserting records in the DB if there was a successfull export
+    if(export_source_db_data()):
+
+        # get the 'CurrentTableName' from the DynamoDB table
+        current_table = get_current_table_name()
+
+        if current_table == 'TABLE_BLUE':
+            new_table_name = 'TABLE_GREEN'
+        else:
+            new_table_name = 'TABLE_BLUE'
+
+        # use string interpolation to populate the name of the current table
+        insert_sql = insert_sql.format(current_table_name=new_table_name)
+
+        delete_all_from_new_table_sql = "delete from {new_table_name}".format(
+            new_table_name=new_table_name)
+        # delete all of the records in the 'new_table' before we start inserting records into it
+        rds_client.execute_statement(resourceArn=db_cluster_arn, secretArn=db_credentials_secrets_store_arn,
+                                     database=aurora_database_name, sql=delete_all_from_new_table_sql)
+
+        parameter_set = []
+
+        with open(fileName, 'r') as file:
+            reader = csv.DictReader(file, delimiter=',')
+
+            for row in reader:
+
+                entry = get_entry(row)
+
+                if(len(parameter_set) == batch_size):
+                    try_execute_bath_transaction(insert_sql, parameter_set)
+
+                    transaction_count = transaction_count + 1
+                    print(
+                        f'Transaction count: {transaction_count}. Num of failed transactions: {num_of_failed_transactions}')
+
+                    parameter_set.clear()
+                    parameter_set.append(entry)
+                else:
+                    parameter_set.append(entry)
+            # check if we have records that didn't fit into a batch (i.e. less than batch_size)
+            if(len(parameter_set) > 0):
+                try_execute_bath_transaction(insert_sql, parameter_set)
+                transaction_count = transaction_count + 1
+                print(f'Transaction count: {transaction_count}')
+
+        # if we have inserted all of the records without an issue
+        if(num_of_failed_transactions == 0):
+            update_current_table_name(new_table_name)
+            update_db_views(new_table_name)
+            notify_devs('Full database sync completed successfully! Currently used table: {new_table_name}.\n The sync took: {elapsed_time} minutes'.format(
+                new_table_name=new_table_name, elapsed_time=calculate_elapsed_time()))
+        else:
+            notify_devs('Failed to perform Source database sync.')
+    else:
+        notify_devs('Failed to export source database.')
+
+    # Self-Terminate the Instance
+    subprocess.Popen(self_terminate_bash_commnand.split())
 # END OF FUNCTIONS
 
 
+# VARIABLES
 secrets = get_secret('secret-manager-secret-name-here')
 
 rds_client = boto3.client('rds-data')
@@ -271,7 +335,6 @@ self_terminate_bash_commnand = 'sudo shutdown -h now'
 # measure record the start time
 start_time = time.monotonic()
 
-
 batch_size = 250
 transaction_count = 0
 num_of_failed_transactions = 0
@@ -279,62 +342,5 @@ num_of_failed_transactions = 0
 insert_sql = 'INSERT INTO {current_table_name} VALUES (\
 :ID, :STATUS_DATE, :DRAW_WORKS_RATING);'
 
-# start inserting records in the DB if there was a successfull export
-if(export_source_db_data()):
-
-    # get the 'CurrentTableName' from the DynamoDB table
-    current_table = get_current_table_name()
-
-    if current_table == 'TABLE_BLUE':
-        new_table_name = 'TABLE_GREEN'
-    else:
-        new_table_name = 'TABLE_BLUE'
-
-    # use string interpolation to populate the name of the current table
-    insert_sql = insert_sql.format(current_table_name=new_table_name)
-
-    delete_all_from_new_table_sql = "delete from {new_table_name}".format(
-        new_table_name=new_table_name)
-    # delete all of the records in the 'new_table' before we start inserting records into it
-    rds_client.execute_statement(resourceArn=db_cluster_arn, secretArn=db_credentials_secrets_store_arn,
-                                 database=aurora_database_name, sql=delete_all_from_new_table_sql)
-
-    parameter_set = []
-
-    with open(fileName, 'r') as file:
-        reader = csv.DictReader(file, delimiter=',')
-
-        for row in reader:
-
-            entry = get_entry(row)
-
-            if(len(parameter_set) == batch_size):
-                try_execute_bath_transaction(insert_sql, parameter_set)
-
-                transaction_count = transaction_count + 1
-                print(
-                    f'Transaction count: {transaction_count}. Num of failed transactions: {num_of_failed_transactions}')
-
-                parameter_set.clear()
-                parameter_set.append(entry)
-            else:
-                parameter_set.append(entry)
-        # check if we have records that didn't fit into a batch (i.e. less than batch_size)
-        if(len(parameter_set) > 0):
-            try_execute_bath_transaction(insert_sql, parameter_set)
-            transaction_count = transaction_count + 1
-            print(f'Transaction count: {transaction_count}')
-
-    # if we have inserted all of the records without an issue
-    if(num_of_failed_transactions == 0):
-        update_current_table_name(new_table_name)
-        update_db_views(new_table_name)
-        notify_devs('Full database sync completed successfully! Currently used table: {new_table_name}.\n The sync took: {elapsed_time} minutes'.format(
-            new_table_name=new_table_name, elapsed_time=calculate_elapsed_time()))
-    else:
-        notify_devs('Failed to perform Source database sync.')
-else:
-    notify_devs('Failed to export source database.')
-
-# Self-Terminate the Instance
-process = subprocess.Popen(self_terminate_bash_commnand.split())
+if __name__ == "__main__":
+    main()
