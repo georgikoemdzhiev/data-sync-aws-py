@@ -2,11 +2,11 @@
 
 Overall design of the stopgap system
 
-![Overall_infra.png](../diagrams/rendered/infra.png)
+![Overall_infra.png](diagrams/infra.png)
 
 The Python script that get's executed as part of the  db sync goes through the following workflow:
 
-![Overall_infra.png](../diagrams/rendered/script_workflow.png)
+![Overall_infra.png](diagrams/script_workflow.png)
 
 ## Prerequisite
 
